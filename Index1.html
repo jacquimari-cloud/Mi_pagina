@@ -1,0 +1,365 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <title>Dashboard PISA — Matemática (Argentina)</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <!-- Bootstrap -->
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+  <!-- Leaflet CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <style>
+    /* -------------------
+       Theme variables
+       -------------------*/
+    :root{
+      --bg: #f5f7fb;
+      --card: #ffffff;
+      --text: #0f172a;
+      --muted: #6c757d;
+      --accent: #0b5ed7;
+      --accent-contrast: #fff;
+      --chart-bg-rgba: 11,94,215,0.08;
+    }
+    body.dark {
+      --bg: #0b1220;
+      --card: #0f172a;
+      --text: #e6eef8;
+      --muted: #98a2b3;
+      --accent: #55b4ff;
+      --accent-contrast: #031027;
+      --chart-bg-rgba: 85,180,255,0.08;
+    }
+
+    /* -------------------
+       Layout
+       -------------------*/
+    html,body{height:100%}
+    body {
+      margin:0;
+      font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+      background: var(--bg);
+      color: var(--text);
+      -webkit-font-smoothing:antialiased;
+      -moz-osx-font-smoothing:grayscale;
+    }
+    .app-header {
+      background: linear-gradient(90deg,var(--accent) 0%, #063a78 100%);
+      color: var(--accent-contrast);
+      padding: 18px;
+      border-radius: 8px;
+      margin: 12px;
+      display:flex;
+      align-items:center;
+      gap:16px;
+      justify-content:space-between;
+    }
+    .app-title { margin:0; font-weight:600; font-size:1.05rem; }
+    .container-main { padding: 12px; }
+
+    .card {
+      background: var(--card);
+      border-radius: 10px;
+      box-shadow: 0 6px 18px rgba(16,24,40,0.06);
+      color: var(--text);
+    }
+
+    #map { height: 340px; border-radius:8px; }
+    .chart-wrap { height: 320px; }
+    .small-muted { color: var(--muted); }
+
+    /* responsive */
+    @media (max-width: 991px){
+      #map{height:240px}
+      .chart-wrap{height:220px}
+    }
+
+    /* simple toggle style */
+    .theme-toggle {
+      background: transparent;
+      border: 1px solid rgba(255,255,255,0.15);
+      color: var(--accent-contrast);
+    }
+  </style>
+</head>
+<body>
+  <header class="app-header">
+    <div style="display:flex;flex-direction:column;">
+      <div style="display:flex;gap:10px;align-items:center;">
+        <h1 class="app-title">Dashboard PISA — Matemática (Argentina)</h1>
+        <span class="badge bg-light text-dark">Serie 2000–2022</span>
+      </div>
+      <div style="font-size:.85rem; opacity:.95" class="small-muted">Interfaz lista para GitHub Pages — tema claro/oscuro</div>
+    </div>
+
+    <div style="display:flex;gap:8px;align-items:center;">
+      <button id="btn-toggle-theme" class="btn btn-sm theme-toggle">Modo oscuro</button>
+      <button id="download-csv" class="btn btn-sm btn-light">Descargar CSV</button>
+    </div>
+  </header>
+
+  <main class="container-main">
+    <div class="row g-3">
+      <div class="col-12 col-lg-8">
+        <div class="card p-3 mb-3">
+          <h5 style="margin-bottom:8px">Evolución PISA — Matemática (Argentina)</h5>
+          <div class="chart-wrap">
+            <canvas id="pisaLineChart"></canvas>
+          </div>
+        </div>
+
+        <div class="card p-3 mb-3">
+          <h5 style="margin-bottom:8px">Mapa — Indicador Nacional</h5>
+          <div id="map"></div>
+        </div>
+      </div>
+
+      <div class="col-12 col-lg-4">
+        <div class="card p-3 mb-3">
+          <h6>Datos (tabla)</h6>
+          <div style="max-height:360px; overflow:auto; margin-top:8px;">
+            <table id="pisa-table" class="table table-sm table-striped" style="margin-bottom:0;">
+              <thead class="table-light"><tr><th>Año</th><th>Score</th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="card p-3">
+          <h6>Controles</h6>
+          <div class="mb-2 small-muted">Seleccioná el rango de años para filtrar el gráfico.</div>
+          <label class="form-label small">Año inicio</label>
+          <select id="yearStart" class="form-select form-select-sm mb-2"></select>
+          <label class="form-label small">Año fin</label>
+          <select id="yearEnd" class="form-select form-select-sm mb-3"></select>
+          <div class="d-grid gap-2">
+            <button id="btn-update-range" class="btn btn-primary btn-sm">Aplicar rango</button>
+            <button id="btn-reset-range" class="btn btn-outline-secondary btn-sm">Restaurar</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <footer style="margin-top:14px; font-size:.85rem;" class="small-muted card p-2">
+      Fuentes: OECD PISA (valores embebidos para visualización). Subí tu CSV a este mismo repo si querés reemplazar la serie.
+    </footer>
+  </main>
+
+  <!-- Librerías -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+
+  <script>
+  /* =========================
+     Datos PISA embebidos (2000-2022)
+     ========================= */
+  const PISA_SERIE = [
+    { anio: 2000, score: 388 },
+    { anio: 2003, score: 385 },
+    { anio: 2006, score: 381 },
+    { anio: 2009, score: 388 },
+    { anio: 2012, score: 396 },
+    { anio: 2015, score: 409 },
+    { anio: 2018, score: 379 },
+    { anio: 2022, score: 360 }
+  ];
+
+  /* Utility: download text as file */
+  function downloadText(filename, text) {
+    const blob = new Blob([text], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename; a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function pisaToCSV(arr){
+    const header = ['anio','pais','score_matematica'];
+    const lines = arr.map(r => `${r.anio},Argentina,${r.score}`);
+    return header.join(',') + '\n' + lines.join('\n');
+  }
+
+  document.getElementById('download-csv').addEventListener('click', ()=>{
+    downloadText('pisa_serie_argentina.csv', pisaToCSV(PISA_SERIE));
+  });
+
+  /* =========================
+     Theme toggle (persist)
+     ========================= */
+  const bodyEl = document.body;
+  const themeBtn = document.getElementById('btn-toggle-theme');
+  function applyThemeFromStorage(){
+    const t = localStorage.getItem('dashboard-theme') || 'light';
+    if (t === 'dark') {
+      bodyEl.classList.add('dark');
+      themeBtn.textContent = 'Modo claro';
+    } else {
+      bodyEl.classList.remove('dark');
+      themeBtn.textContent = 'Modo oscuro';
+    }
+    // update chart colors after theme change
+    updateChartColorsForTheme();
+  }
+  themeBtn.addEventListener('click', ()=>{
+    const isDark = bodyEl.classList.toggle('dark');
+    localStorage.setItem('dashboard-theme', isDark ? 'dark':'light');
+    themeBtn.textContent = isDark ? 'Modo claro':'Modo oscuro';
+    updateChartColorsForTheme();
+  });
+  applyThemeFromStorage();
+
+  /* =========================
+     Map (Leaflet)
+     ========================= */
+  const map = L.map('map', { zoomControl: true }).setView([-34.5, -64], 4);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '© OpenStreetMap contributors'
+  }).addTo(map);
+  const markersGroup = L.featureGroup().addTo(map);
+
+  function updateMapWithLatest(series){
+    markersGroup.clearLayers();
+    const last = series.slice().sort((a,b)=>a.anio-b.anio).pop();
+    if (!last) return;
+    const score = Number(last.score);
+    const color = score >= 400 ? '#2ca02c' : score >= 380 ? '#ffbf00' : '#d62728';
+    const marker = L.circleMarker([-34.5, -64], { radius: 14, fillOpacity: .85, color }).bindPopup(`<strong>Argentina (PISA)</strong><br>Año: ${last.anio}<br>Score: ${score}`);
+    markersGroup.addLayer(marker);
+    try {
+      const b = markersGroup.getBounds();
+      if (b && b.isValid && b.isValid()) map.fitBounds(b.pad(0.4));
+    } catch(e) {
+      map.setView([-34.5, -64], 4);
+      console.warn('Mapa: no se pudo ajustar bounds:', e);
+    }
+  }
+
+  /* =========================
+     Table rendering
+     ========================= */
+  const tbody = document.querySelector('#pisa-table tbody');
+  function renderTable(series){
+    tbody.innerHTML = '';
+    series.slice().sort((a,b)=>b.anio-a.anio).forEach(r => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td>${r.anio}</td><td>${r.score}</td>`;
+      tbody.appendChild(tr);
+    });
+  }
+
+  /* =========================
+     Chart (Chart.js) + theme-aware colors
+     ========================= */
+  const ctx = document.getElementById('pisaLineChart').getContext('2d');
+
+  // get computed colors from CSS variables
+  function cssVar(name) {
+    return getComputedStyle(document.documentElement).getPropertyValue(name) || getComputedStyle(bodyEl).getPropertyValue(name);
+  }
+  function colorFor(varName) {
+    return cssVar(varName).trim() || '#0b5ed7';
+  }
+
+  // create chart with placeholder colors - will be updated by updateChartColorsForTheme()
+  const pisaChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: PISA_SERIE.map(s=>s.anio),
+      datasets: [{
+        label: 'PISA — Puntaje Matemática (Argentina)',
+        data: PISA_SERIE.map(s=>s.score),
+        tension: 0.3,
+        fill: true,
+        backgroundColor: 'rgba(11,94,215,0.08)',
+        borderColor: '#0b5ed7',
+        pointRadius: 6,
+        pointHoverRadius: 8
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      scales: {
+        y: { beginAtZero: false, suggestedMin: 300, suggestedMax: 450 }
+      },
+      plugins: { legend: { display: true } }
+    }
+  });
+
+  function updateChartColorsForTheme(){
+    // read computed colors
+    const accent = getComputedStyle(bodyEl).getPropertyValue('--accent').trim() || '#0b5ed7';
+    const bgRGBA = getComputedStyle(bodyEl).getPropertyValue('--chart-bg-rgba').trim() || '11,94,215,0.08';
+    const border = accent;
+    const bg = `rgba(${bgRGBA})`;
+    // apply to dataset
+    if (pisaChart && pisaChart.data && pisaChart.data.datasets[0]) {
+      pisaChart.data.datasets[0].borderColor = border;
+      pisaChart.data.datasets[0].backgroundColor = bg;
+      // points adapt: fill with accent
+      pisaChart.data.datasets[0].pointBackgroundColor = border;
+      pisaChart.update();
+    }
+  }
+
+  /* =========================
+     Range controls (start/end years)
+     ========================= */
+  function fillYearSelects(series){
+    const years = series.map(s=>s.anio).sort((a,b)=>a-b);
+    const start = document.getElementById('yearStart');
+    const end = document.getElementById('yearEnd');
+    start.innerHTML = ''; end.innerHTML = '';
+    years.forEach(y => {
+      const o1 = document.createElement('option'); o1.value=y; o1.text=y; start.appendChild(o1);
+      const o2 = document.createElement('option'); o2.value=y; o2.text=y; end.appendChild(o2);
+    });
+    start.value = years[0]; end.value = years[years.length-1];
+  }
+
+  function applyRangeFilter(){
+    const yStart = Number(document.getElementById('yearStart').value);
+    const yEnd = Number(document.getElementById('yearEnd').value);
+    const filtered = PISA_SERIE.filter(s => s.anio >= yStart && s.anio <= yEnd).sort((a,b)=>a.anio-b.anio);
+    // chart
+    pisaChart.data.labels = filtered.map(s=>s.anio);
+    pisaChart.data.datasets[0].data = filtered.map(s=>s.score);
+    pisaChart.update();
+    // table & map
+    renderTable(filtered);
+    updateMapWithLatest(filtered.length ? filtered : PISA_SERIE);
+  }
+
+  document.getElementById('btn-update-range').addEventListener('click', applyRangeFilter);
+  document.getElementById('btn-reset-range').addEventListener('click', ()=> {
+    fillYearSelects(PISA_SERIE);
+    pisaChart.data.labels = PISA_SERIE.map(s=>s.anio);
+    pisaChart.data.datasets[0].data = PISA_SERIE.map(s=>s.score);
+    pisaChart.update();
+    renderTable(PISA_SERIE);
+    updateMapWithLatest(PISA_SERIE);
+  });
+
+  /* =========================
+     Init view
+     ========================= */
+  (function init(){
+    fillYearSelects(PISA_SERIE);
+    renderTable(PISA_SERIE);
+    updateMapWithLatest(PISA_SERIE);
+    updateChartColorsForTheme();
+  })();
+
+  /* =========================
+     Small: ensure Chart updates when theme is changed externally (optional)
+     ========================= */
+  window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+    // do not override explicit user choice in localStorage
+    if (!localStorage.getItem('dashboard-theme')) {
+      applyThemeFromStorage();
+    }
+  });
+
+  </script>
+</body>
+</html>
